@@ -17,6 +17,16 @@ jobs:
         with:
           python-version: "3.11"
 
+      # Cloned as a full checkout (not shallow) -- risk scoring in
+      # app/graph_analysis relies on complete `git log` history per file.
+      # Pinned to a fixed commit so an upstream httpx change can't
+      # silently alter file layout (e.g. rename/remove _exceptions.py)
+      # and break these tests for a reason unrelated to our own code.
+      - name: Checkout target repo (httpx, pinned)
+        run: |
+          git clone https://github.com/encode/httpx.git target_repos/httpx
+          git -C target_repos/httpx checkout b5addb64f0161ff6bfe94c124ef76f6a1fba5254
+
       - name: Install test dependencies
         # requirements-test.txt (not requirements.txt) -- no test needs
         # sentence-transformers/torch, so we skip installing them here to

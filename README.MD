@@ -54,12 +54,16 @@ for the interactive API docs.
 ```bash
 pytest tests/ -v
 ```
-Fast, mocked, no API key needed — this is what runs in CI. For a genuine
-end-to-end test against the real API and real index (costs real LLM
-quota):
+Fast, mocked, no API key needed — this is what runs in CI.
+
+For a genuine end-to-end test against the real API and real index (costs
+real LLM quota):
 ```bash
 RUN_E2E=1 pytest tests/test_e2e.py -v
 ```
+**This E2E test is not run in CI** — it needs a live `GOOGLE_API_KEY` and
+costs real quota on every run, so it's left as a manual, local-only check
+before a release rather than something that runs on every push/PR.
 
 ## Architecture, briefly
 
