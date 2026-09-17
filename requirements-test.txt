@@ -1,0 +1,13 @@
+langgraph
+langchain
+langchain-google-genai
+chromadb
+fastapi
+uvicorn
+networkx
+pydantic
+python-dotenv
+tenacity
+langsmith
+pytest
+httpx

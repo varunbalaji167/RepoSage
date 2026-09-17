@@ -1,0 +1,15 @@
+.env
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+demo.py
+
+chroma_db/
+target_repos/
+
+# OS/editor noise
+.DS_Store
+.vscode/
+.idea/

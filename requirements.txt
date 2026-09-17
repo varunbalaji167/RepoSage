@@ -1,0 +1,16 @@
+langgraph
+langchain
+langchain-google-genai
+chromadb
+fastapi
+uvicorn
+networkx
+pydantic
+python-dotenv
+sentence-transformers
+transformers<5.0.0
+tenacity
+langsmith
+# Testing
+pytest
+httpx
