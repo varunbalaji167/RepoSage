@@ -1,0 +1,4 @@
+# Results are machine-produced and large; keep the dataset + scripts in git,
+# and let the current run live under eval/results/latest symlink.
+results/
+__pycache__/

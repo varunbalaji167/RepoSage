@@ -2,7 +2,7 @@
 
 **Status: Phase 1 complete.** Both query types work end-to-end through a
 single API endpoint, backed by real dependency and call graphs, tested
-(94 automated tests + an opt-in real end-to-end test), traced (LangSmith),
+evaluated against a 48-query labelled set (see [`EVAL.md`](./EVAL.md)), traced (LangSmith),
 containerized, and deployed. For the full, step-by-step log of every
 design decision and real bug found while building this, see
 [`DECISIONS.md`](./DECISIONS.md).
@@ -63,6 +63,44 @@ chosen from real import relationships, not arbitrarily.
                        one QueryResponse schema)
 ```
 
+The same picture annotated by framework — where **LangGraph**, **LangChain (LCEL)** and the **RAG pattern** actually live, and which external resources each node reads:
+
+```mermaid
+flowchart TB
+  Client -->|POST /ask| API[FastAPI]
+  API -->|graph.invoke| CLS
+  FMT -->|QueryResponse| API
+
+  subgraph LG["LangGraph · state-machine orchestration"]
+    direction TB
+    CLS["classify_node<br/><i>LangChain LCEL: prompt | Gemini.with_structured_output</i>"]
+    ROUTE{route_by_intent}
+    CE["code_explanation_node<br/><i>LangChain LCEL · RAG chain (detail below)</i>"]
+    RA["risk_assessment_node<br/>cached scores, no LLM"]
+    FMT[format_response_node]
+    CLS --> ROUTE
+    ROUTE -->|intent = code_explanation| CE
+    ROUTE -->|intent = risk_assessment| RA
+    CE --> FMT
+    RA --> FMT
+  end
+
+  CHROMA[("ChromaDB · code_chunks<br/>Jina code embeddings")]
+  CG[("networkx call graph<br/>CHA-resolved edges")]
+  RISK[("risk cache<br/>AST import graph + git log")]
+  LLM["Gemini<br/>FallbackRunnable + tenacity backoff"]
+
+  CLS -.classify.-> LLM
+  CE -.retrieve.-> CHROMA
+  CE -.1-hop expand.-> CG
+  CE -.generate.-> LLM
+  RA -.read.-> RISK
+```
+
+- **LangGraph** is the outer dashed box: five named nodes, one conditional edge (`route_by_intent`), partial-update merges into a `TypedDict` state. It owns *routing* and nothing else.
+- **LangChain (LCEL)** lives *inside* two of those nodes. In `classify_node` it's a one-line composition — prompt piped into `ChatGoogleGenerativeAI.with_structured_output(QueryClassification)`. In `code_explanation_node` it's the longer chain shown below.
+- **RAG** = the LCEL chain in `code_explanation_node`: retrieve (ChromaDB + 1-hop walk through the call graph) → format context → prompt → Gemini → parse → build citations from `Document` metadata.
+
 **Indexing** (`app/indexing/`) — AST-based chunking at function/class
 granularity, with a sliding-window fallback for oversized functions;
 embedded with `jina-embeddings-v2-base-code` (local, free) into a
@@ -85,6 +123,29 @@ question literally names a `Class.method` that pure semantic similarity
 ranked below the cutoff — a real limitation found via live testing (see
 `DECISIONS.md`, Step 9), not a hypothetical.
 
+The RAG chain itself is three parallel branches whose outputs are reunited
+*after* the LLM call — the mechanism that keeps citations grounded instead
+of generated:
+
+```mermaid
+flowchart LR
+  Q[question] --> R["_retrieve_and_expand<br/>Chroma + 1-hop call graph"]
+  R --> P((RunnableParallel))
+  P -->|llm_answer| L[_format_context → prompt → Gemini → str]
+  P -->|primary_docs| D1[pass through]
+  P -->|expanded_docs| D2[pass through]
+  L --> F[_build_final_response<br/>answer + citations from Document metadata]
+  D1 --> F
+  D2 --> F
+  F --> O[CodeExplanationResult]
+```
+
+A plain `prompt | llm | parser` pipe would discard the `Document` objects
+the moment their text was embedded into the prompt string. The two
+pass-through branches carry them past the LLM so the final step builds
+citations from `Document.metadata` — real file paths and line numbers —
+rather than from anything the LLM wrote.
+
 **Classification** (`app/classification/`) — structured LLM output
 (`Literal["code_explanation", "risk_assessment"]`) for intent, kept
 deliberately separate from filename/class-name extraction, which uses no
@@ -100,11 +161,10 @@ calls get per-error-type handling: rate limits fall back to a lighter
 model, transient errors get exponential backoff, misconfigurations
 (bad key, wrong model name) fail immediately rather than retry a real bug.
 
-**Testing** — 94 fast, mocked tests (no API key or real index needed)
-run in CI on every push, plus an opt-in real end-to-end test
-(`RUN_E2E=1`) against the live API, index, and call graph — the only
-thing that can catch a wrong assumption about a real dependency's
-behavior, which mocks structurally cannot.
+**Evaluation** — a 48-query labelled set run end-to-end against the real system. Full
+write-up in `docs/EVAL.md`; latest headline: retrieval hit 30/31 (naive baseline 28/31),
+intent 48/48, risk numbers 9/9, abstention 3/6 (the weak spot), warm p50/p95 2.7s/25.3s.
+94 mocked unit tests still run in CI for logic that doesn't need the real API/index.
 
 **Observability** — LangSmith tracing (env-var only, no code
 instrumentation needed — every LCEL `Runnable` and LangGraph node already

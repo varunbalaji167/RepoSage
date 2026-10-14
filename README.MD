@@ -65,6 +65,13 @@ RUN_E2E=1 pytest tests/test_e2e.py -v
 costs real quota on every run, so it's left as a manual, local-only check
 before a release rather than something that runs on every push/PR.
 
+For a full evaluation (48-query labelled set, retrieval vs. gold, hallucination
+judging, latency and cost) — also opt-in, costs real quota:
+```bash
+python eval/run_eval.py
+```
+See [`docs/EVAL.md`](docs/EVAL.md) for what it measures and what it doesn't prove.
+
 ## Architecture, briefly
 
 ```
@@ -72,6 +79,48 @@ question -> classify_node -> route_by_intent -> code_explanation_node
                                                -> risk_assessment_node
                                                -> format_response_node -> QueryResponse
 ```
+
+Where each framework sits:
+
+```mermaid
+flowchart TB
+    Client([Client]) ==> API["FastAPI<br/><b>POST /ask</b>"]
+    API ==> CLS
+    FMT ==> API
+
+    subgraph LG["<b>LangGraph</b> &mdash; state machine (TypedDict state, partial-update merges)"]
+        direction TB
+        CLS["<b>classify_node</b><br/><i>LCEL: prompt | with_structured_output</i>"]
+        ROUTE{route_by_intent}
+        CE["<b>code_explanation_node</b><br/><i>LCEL &middot; RAG chain</i><br/>retrieve &rarr; RunnableParallel &rarr; generate"]
+        RA["<b>risk_assessment_node</b><br/>filter cached scores &middot; no LLM"]
+        FMT["<b>format_response_node</b><br/>normalize &rarr; QueryResponse"]
+        CLS --> ROUTE
+        ROUTE -- "intent = code_explanation" --> CE
+        ROUTE -- "intent = risk_assessment" --> RA
+        CE --> FMT
+        RA --> FMT
+    end
+
+    subgraph EXT["external resources"]
+        direction LR
+        CHROMA[("ChromaDB<br/>code_chunks")]
+        CGRAPH[("networkx<br/>call graph")]
+        RISK[("risk cache<br/>AST + git log")]
+        LLM["Gemini<br/>FallbackRunnable"]
+    end
+
+    CLS -. classify .-> LLM
+    CE -. retrieve .-> CHROMA
+    CE -. "1-hop expand" .-> CGRAPH
+    CE -. generate .-> LLM
+    RA -. read .-> RISK
+
+    classDef lcel stroke:#1f6f6b,stroke-width:2.5px
+    class CLS,CE lcel
+```
+
+LangGraph owns routing (dashed box); LangChain LCEL composes the chains inside the two LLM-using nodes (teal borders); the full RAG chain detail and the "why" behind each piece live in [`docs/RepoSage_Design_Doc.md`](docs/RepoSage_Design_Doc.md).
 
 - `app/indexing/` — AST-based code chunking + Chroma vector index
 - `app/graph_analysis/` — import graph, function-level call graph (with
